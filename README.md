@@ -19,10 +19,6 @@ response. It will cause responses to be sent to the connected client.
 **Please note** that this MCP server will be accessed by third-party tools, allowing them to modify
 and read the contents of your opened place. Third-party data handling and privacy practices are
 subject to their respective terms and conditions.
-Safe mode is enabled by default.
-`insert_model` and destructive `run_code` patterns require both `allow_destructive=true`
-and a one-time approval click in the Studio plugin toolbar (`Approve 1 Destructive`).
-`start_stop_play` and `run_script_in_play_mode` are allowed in safe mode.
 
 ![Scheme](MCP-Server.png)
 
@@ -30,15 +26,12 @@ The setup process also contains a small plugin installation and MCP client confi
 
 ### Included tools
 
-- **run_code** - Runs Luau in Roblox Studio and returns structured JSON: `{ returns, logs, warnings, errors }`.
-- **insert_model** - Inserts a model from the Roblox Creator Store into the workspace.
+- **run_code** - Runs a command in Roblox Studio and returns the printed output. Can be used to both make changes and retrieve information.
+- **insert_model** - Inserts a model from the Roblox Creator Store into the workspace. Returns the inserted model name.
 - **get_console_output** - Gets the console output from Roblox Studio.
 - **start_stop_play** - Starts or stops play mode or runs the server.
-- **run_script_in_play_mode** - Runs a script in play mode and automatically stops play after the script finishes or times out.
+- **run_script_in_play_mode** - Runs a script in play mode and automatically stops play after the script finishes or times out. Returns structured output including logs, errors, and duration.
 - **get_studio_mode** - Gets the current Studio mode (`start_play`, `run_server`, or `stop`).
-- **query_instances** - Read-only inspector with `QueryDescendants` selector support, filters by path/class/name/tag/attributes, cursor pagination, and optional `select_properties`.
-- **get_plugin_info** - Returns plugin handshake metadata.
-- **health_check** - Returns `{ connected, plugin_ready, studio_mode, place_id, server_version, plugin_version }`.
 
 ## Setup
 
@@ -67,23 +60,6 @@ To set up manually add following to your MCP Client config:
     "Roblox Studio": {
       "args": [
         "--stdio"
-      ],
-      "command": "Path-to-downloaded\\rbx-studio-mcp.exe"
-    }
-  }
-}
-```
-
-Safe mode is enabled by default when you pass `--stdio`.
-To disable it intentionally, use either `--safe-mode=false` or `--unsafe-mode`:
-
-```json
-{
-  "mcpServers": {
-    "Roblox Studio": {
-      "args": [
-        "--stdio",
-        "--unsafe-mode"
       ],
       "command": "Path-to-downloaded\\rbx-studio-mcp.exe"
     }
@@ -139,7 +115,7 @@ To make sure everything is set up correctly, follow these steps:
    which you can also verify in the console output.
 1. Verify that Claude Desktop is correctly configured by clicking on the hammer icon for MCP tools
    beneath the text field where you enter prompts. This should open a window with the list of
-   available Roblox Studio tools (for example `run_code` and `query_instances`).
+   available Roblox Studio tools (`insert_model` and `run_code`).
 
 **Note**: You can fix common issues with setup by restarting Studio and Claude Desktop. Claude
 sometimes is hidden in the system tray, so ensure you've exited it completely.

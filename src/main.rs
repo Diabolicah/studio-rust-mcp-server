@@ -3,7 +3,6 @@ use clap::Parser;
 use color_eyre::eyre::Result;
 use rbx_studio_server::*;
 use rmcp::ServiceExt;
-use runtime_guard::{kill_other_instances, spawn_parent_watchdog, InstanceLock};
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::Arc;
@@ -12,7 +11,6 @@ use tracing_subscriber::{self, EnvFilter};
 mod error;
 mod install;
 mod rbx_studio_server;
-mod runtime_guard;
 
 /// Simple MCP proxy for Roblox Studio
 /// Run without arguments to install the plugin
@@ -22,12 +20,6 @@ struct Args {
     /// Run as MCP server on stdio
     #[arg(short, long)]
     stdio: bool,
-    /// Keep safe mode enabled (default true). Pass --safe-mode=false to disable.
-    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
-    safe_mode: bool,
-    /// Disable safe mode explicitly.
-    #[arg(long, default_value_t = false)]
-    unsafe_mode: bool,
 }
 
 #[tokio::main]
@@ -46,15 +38,6 @@ async fn main() -> Result<()> {
     }
 
     tracing::debug!("Debug MCP tracing enabled");
-    let safe_mode = args.safe_mode && !args.unsafe_mode;
-    if safe_mode {
-        tracing::info!("Safe mode is enabled");
-    }
-
-    let instance_lock = InstanceLock::acquire()?;
-    kill_other_instances();
-    spawn_parent_watchdog();
-    tracing::info!("Single-instance guard and parent watchdog enabled");
 
     let server_state = Arc::new(Mutex::new(AppState::new()));
 
@@ -87,7 +70,7 @@ async fn main() -> Result<()> {
     };
 
     // Create an instance of our counter router
-    let service = RBXStudioServer::new(Arc::clone(&server_state), safe_mode)
+    let service = RBXStudioServer::new(Arc::clone(&server_state))
         .serve(rmcp::transport::stdio())
         .await
         .inspect_err(|e| {
@@ -98,7 +81,6 @@ async fn main() -> Result<()> {
     close_tx.send(()).ok();
     tracing::info!("Waiting for web server to gracefully shutdown");
     server_handle.await.ok();
-    drop(instance_lock);
     tracing::info!("Bye!");
     Ok(())
 }

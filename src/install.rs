@@ -22,17 +22,9 @@ Tools included:
 - start_stop_play
 - run_script_in_play_mode
 - get_studio_mode
-- query_instances
-- get_plugin_info
-- health_check
 
 MCP Clients set up:
 {successes}
-
-Safety defaults:
-- safe mode is ON by default
-- insert_model and destructive run_code patterns require allow_destructive=true and clicking 'Approve 1 Destructive' in Studio
-- start_stop_play and run_script_in_play_mode are allowed in safe mode
 
 Note: connecting a third-party LLM to Roblox Studio via an MCP server will share your data with that external service provider. Please review their privacy practices carefully before proceeding.
 To uninstall, delete the MCPStudioPlugin.rbxm from your Plugins directory.")
