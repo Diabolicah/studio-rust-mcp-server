@@ -7,6 +7,7 @@ use std::io::BufReader;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::vec;
 use std::{env, fs, io};
 
@@ -79,6 +80,14 @@ fn get_cursor_config() -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(home_dir) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
         paths.push(Path::new(&home_dir).join(".cursor").join("mcp.json"));
+    }
+    paths
+}
+
+fn get_codex_config() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home_dir) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
+        paths.push(Path::new(&home_dir).join(".codex").join("config.toml"));
     }
     paths
 }
@@ -175,6 +184,37 @@ pub fn install_to_config(
     Ok(name.to_string())
 }
 
+pub fn install_to_codex(exe_path: &Path) -> Result<String> {
+    let codex_config = get_codex_config()
+        .into_iter()
+        .next()
+        .ok_or_else(|| eyre!("No config paths found for Codex"))?;
+
+    if !codex_config.exists() {
+        return Err(eyre!("No Codex config file found at {codex_config:?}"));
+    }
+
+    let output = Command::new("codex")
+        .arg("mcp")
+        .arg("add")
+        .arg("Roblox_Studio")
+        .arg("--")
+        .arg(exe_path)
+        .arg("--stdio")
+        .output()
+        .map_err(|e| eyre!("Could not run Codex CLI: {e:#?}"))?;
+
+    if !output.status.success() {
+        return Err(eyre!(
+            "Codex CLI failed while adding MCP server: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    println!("Installed MCP Studio plugin to Codex config {codex_config:?}");
+    Ok("Codex".to_string())
+}
+
 async fn install_internal() -> Result<String> {
     let plugin_bytes = include_bytes!(concat!(env!("OUT_DIR"), "/MCPStudioPlugin.rbxm"));
     let studio = RobloxStudio::locate()?;
@@ -205,6 +245,7 @@ async fn install_internal() -> Result<String> {
     let results = vec![
         install_to_config(get_claude_config(), &this_exe, "Claude"),
         install_to_config(get_cursor_config(), &this_exe, "Cursor"),
+        install_to_codex(&this_exe),
         suggest_to_config_claude_code(&this_exe),
     ];
 
@@ -215,7 +256,7 @@ async fn install_internal() -> Result<String> {
 
     if successes.is_empty() {
         let error = errors.into_iter().fold(
-            eyre!("Failed to install to either Claude or Cursor"),
+            eyre!("Failed to install to Claude, Cursor, or Codex"),
             |report, e| report.note(e),
         );
         return Err(error);
@@ -229,7 +270,6 @@ async fn install_internal() -> Result<String> {
 
 #[cfg(target_os = "windows")]
 pub async fn install() -> Result<()> {
-    use std::process::Command;
     if let Err(e) = install_internal().await {
         tracing::error!("Failed initialize Roblox MCP: {:#}", e);
     }
