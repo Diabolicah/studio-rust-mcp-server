@@ -5,11 +5,26 @@ local ConsoleOutput = require(Main.Utils.ConsoleOutput)
 local GameStopUtil = require(Main.Utils.GameStopUtil)
 local GlobalVariables = require(Main.Utils.GlobalVariables)
 
+local function hasActiveSession(): boolean
+	return GlobalVariables.studioMode ~= "stop" or GlobalVariables.playSessionInFlight
+end
+
 local function startPlay(): string?
-	ConsoleOutput.outputMessage = ""
+	if hasActiveSession() then
+		return "Play session already active or starting"
+	end
+
+	ConsoleOutput.reset()
 	GlobalVariables.studioMode = "start_play"
+	GlobalVariables.playSessionInFlight = true
 	task.spawn(function()
-		StudioTestService:ExecutePlayModeAsync({})
+		local ok, err = pcall(function()
+			StudioTestService:ExecutePlayModeAsync({})
+		end)
+		GlobalVariables.playSessionInFlight = false
+		if not ok then
+			warn("[MCP] start_play failed: " .. tostring(err))
+		end
 	end)
 	return "Started play"
 end
@@ -17,13 +32,25 @@ end
 local function stop(): string?
 	GameStopUtil.stopPlay()
 	GlobalVariables.studioMode = "stop"
+	GlobalVariables.playSessionInFlight = false
 	return "Stopped"
 end
 
 local function runServer(): string?
+	if hasActiveSession() then
+		return "Play session already active or starting"
+	end
+
 	GlobalVariables.studioMode = "run_server"
+	GlobalVariables.playSessionInFlight = true
 	task.spawn(function()
-		StudioTestService:ExecuteRunModeAsync({})
+		local ok, err = pcall(function()
+			StudioTestService:ExecuteRunModeAsync({})
+		end)
+		GlobalVariables.playSessionInFlight = false
+		if not ok then
+			warn("[MCP] run_server failed: " .. tostring(err))
+		end
 	end)
 	return "Ran server"
 end

@@ -41,8 +41,12 @@ end)
 
 local startTime = os.clock()
 local isTimeout = false
+local ended = false
 
 local function endTest()
+	if ended then return end
+	ended = true
+
 	local duration = os.clock() - startTime
 	task.wait(0.1)
 
@@ -69,6 +73,7 @@ end
 
 task.spawn(function()
 	wait(]] .. timeoutStr .. [[)
+	if ended then return end
 	isTimeout = true
 	endTest()
 end)
@@ -92,7 +97,12 @@ end
 local function injectTestScript(args: Types.RunScriptInPlayModeArgs)
 	removeTestScript()
 
-	local source = buildTestRunnerSource(args.code, args.timeout or 1_000_000)
+	local timeoutSeconds = args.timeout
+	if timeoutSeconds == nil and type(args.timeout_ms) == "number" then
+		timeoutSeconds = math.max(args.timeout_ms, 0) / 1000
+	end
+
+	local source = buildTestRunnerSource(args.code, timeoutSeconds or 1_000_000)
 	local testScript = Instance.new("Script")
 	testScript.Name = TEST_SCRIPT_NAME
 	testScript.Parent = ServerScriptService
@@ -102,7 +112,8 @@ end
 local function runScriptInPlayMode(args: Types.RunScriptInPlayModeArgs): string?
 	injectTestScript(args)
 
-	ConsoleOutput.outputMessage = ""
+	ConsoleOutput.reset()
+	GlobalVariables.playSessionInFlight = true
 	local success, result = pcall(function()
 		if args.mode == "start_play" then
 			GlobalVariables.studioMode = "start_play"
@@ -113,6 +124,7 @@ local function runScriptInPlayMode(args: Types.RunScriptInPlayModeArgs): string?
 		end
 	end)
 
+	GlobalVariables.playSessionInFlight = false
 	GlobalVariables.studioMode = "stop"
 	removeTestScript()
 
@@ -137,6 +149,12 @@ local function handleRunScriptInPlayMode(args: Types.ToolArgs): string?
 	if runScriptInPlayModeArgs.timeout ~= nil then
 		if type(runScriptInPlayModeArgs.timeout) ~= "number" or runScriptInPlayModeArgs.timeout < 0 then
 			error("Timeout must be a number greater than 0 in RunScriptInPlayMode")
+		end
+	end
+
+	if runScriptInPlayModeArgs.timeout_ms ~= nil then
+		if type(runScriptInPlayModeArgs.timeout_ms) ~= "number" or runScriptInPlayModeArgs.timeout_ms < 0 then
+			error("timeout_ms must be a number greater than or equal to 0 in RunScriptInPlayMode")
 		end
 	end
 

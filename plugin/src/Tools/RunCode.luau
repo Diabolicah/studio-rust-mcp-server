@@ -3,80 +3,94 @@ local Types = require(Main.Types)
 
 local HttpService = game:GetService("HttpService")
 
-local function runCodeWithOutput(command: string): string
-	local output = ""
-
-	local function getTableType(arg)
-		local hasArray = false
-		local hasTable = false
-		for key, _value in arg do
-			if typeof(key) == "number" then
-				hasArray = true
-			else
-				hasTable = true
-			end
-			if hasArray and hasTable then
-				break
-			end
+local function getTableType(arg)
+	local hasArray = false
+	local hasTable = false
+	for key, _value in arg do
+		if typeof(key) == "number" then
+			hasArray = true
+		else
+			hasTable = true
 		end
-		return hasArray, hasTable
+		if hasArray and hasTable then
+			break
+		end
+	end
+	return hasArray, hasTable
+end
+
+local function serializeValue(arg: any, visited: { [table]: boolean }): any
+	local argType = typeof(arg)
+	if argType == "table" then
+		if visited[arg] then
+			return "<cycle>"
+		end
+		visited[arg] = true
+
+		local _, isTable = getTableType(arg)
+		local serialized = {}
+		for key, value in arg do
+			local serializedKey = serializeValue(key, visited)
+			serialized[if isTable then tostring(serializedKey) else serializedKey] = serializeValue(value, visited)
+		end
+
+		visited[arg] = nil
+		return serialized
 	end
 
-	local function serializeTable(arg): any
-		if typeof(arg) == "table" then
-			local _, isTable = getTableType(arg)
-
-			local newArg = {}
-			for key, value in arg do
-				local newKey = serializeTable(key)
-				newArg[if isTable then tostring(newKey) else newKey] = serializeTable(value)
-			end
-			return newArg
-		elseif type(arg) == "userdata" then
-			return tostring(arg) or "UNABLE_TO_SERIALIZE"
-		end
-		return arg
+	if argType == "Instance" or argType == "userdata" then
+		return tostring(arg)
 	end
 
-	local function deepClone(t, cache)
-		local clone = {}
-		for key, value in t do
-			local newKey = key
-			if typeof(key) == "table" then
-				if not cache[key] then
-					cache[key] = deepClone(key, cache)
-				end
-				newKey = cache[key]
-			end
+	return arg
+end
 
-			local newValue = value
-			if typeof(value) == "table" then
-				if not cache[value] then
-					cache[value] = deepClone(value, cache)
-				end
-				newValue = cache[value]
-			end
+local function packedToSerializable(packed: { [any]: any }): { any }
+	local n = packed.n or #packed
+	local values = table.create(n)
+	for i = 1, n do
+		values[i] = serializeValue(packed[i], {})
+	end
+	return values
+end
 
-			clone[newKey] = newValue
+local function packedToStrings(packed: { [any]: any }): { string }
+	local values = packedToSerializable(packed)
+	local strValues = table.create(#values)
+	for i, value in values do
+		if typeof(value) == "table" then
+			strValues[i] = HttpService:JSONEncode(value)
+		else
+			strValues[i] = tostring(value)
 		end
-		return clone
+	end
+	return strValues
+end
+
+local function runCode(command: string): string
+	local textOutput = ""
+	local logs = {}
+	local warnings = {}
+	local errors = {}
+	local returnedValues = {}
+	local succeeded = true
+	local runtimeError = nil
+
+	local function addRecord(level: string, ...)
+		local packed = table.pack(...)
+		local values = packedToStrings(packed)
+		local message = table.concat(values, "\t")
+		table.insert(logs, {
+			level = level,
+			message = message,
+			ts = os.clock(),
+		})
+		return message
 	end
 
-	local function toStrTable(t: { any }): { string }
-		local clonedTable = deepClone(t, {})
-		local strTable = table.create(#clonedTable)
-		for i, arg in clonedTable do
-			local serializedArg = serializeTable(arg)
-			strTable[i] = if typeof(serializedArg) == "table"
-				then HttpService:JSONEncode(serializedArg)
-				else serializedArg
-		end
-		return strTable
-	end
-
-	local function addToOutput(header: string, ...)
-		local strResults = toStrTable(table.pack(...))
-		output ..= header .. " " .. table.concat(strResults, "\t") .. "\n"
+	local function appendText(header: string, ...)
+		local message = addRecord(header, ...)
+		textOutput ..= "[" .. header .. "] " .. message .. "\n"
 	end
 
 	local function executeCode()
@@ -86,35 +100,65 @@ local function runCodeWithOutput(command: string): string
 		local oldPrint = print
 		chunkfenv.print = function(...)
 			oldPrint(...)
-			addToOutput("[OUTPUT]", ...)
+			appendText("output", ...)
 		end
 
 		local oldWarn = warn
 		chunkfenv.warn = function(...)
 			oldWarn(...)
-			addToOutput("[WARNING]", ...)
+			local message = appendText("warning", ...)
+			table.insert(warnings, {
+				level = "warning",
+				message = message,
+				ts = os.clock(),
+			})
 		end
 
 		local oldError = error
 		chunkfenv.error = function(...)
+			local message = appendText("error", ...)
+			table.insert(errors, {
+				level = "error",
+				message = message,
+				ts = os.clock(),
+			})
 			oldError(...)
-			addToOutput("[ERROR]", ...)
 		end
 
 		local results = table.pack(chunk())
-		if #results > 0 then
-			addToOutput("[RETURNED RESULTS]", table.unpack(results))
+		returnedValues = packedToSerializable(results)
+		appendText("returned_results", table.unpack(results, 1, results.n or #results))
+	end
+
+	local function buildPayload(): string
+		local payload = {
+			success = succeeded,
+			error = runtimeError,
+			returns = returnedValues,
+			logs = logs,
+			warnings = warnings,
+			errors = errors,
+			text_output = textOutput,
+		}
+		return HttpService:JSONEncode(payload)
+	end
+
+	local function runAndCapture(): string
+		local ok, resultOrError = pcall(executeCode)
+		if not ok then
+			succeeded = false
+			runtimeError = tostring(resultOrError)
+			appendText("unexpected_error", runtimeError)
+			table.insert(errors, {
+				level = "unexpected_error",
+				message = runtimeError,
+				ts = os.clock(),
+			})
 		end
-
-		return results
+		return buildPayload()
 	end
 
-	local ok, errorMessage = pcall(executeCode)
-	if not ok then
-		addToOutput("[UNEXPECTED ERROR]", errorMessage)
-	end
-
-	return output
+	return runAndCapture()
 end
 
 local function handleRunCode(args: Types.ToolArgs): string?
@@ -127,7 +171,7 @@ local function handleRunCode(args: Types.ToolArgs): string?
 		error("Missing command in RunCode")
 	end
 
-	return runCodeWithOutput(runCodeArgs.command)
+	return runCode(runCodeArgs.command)
 end
 
 return handleRunCode :: Types.ToolFunction
