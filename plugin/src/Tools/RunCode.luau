@@ -3,8 +3,36 @@ local Types = require(Main.Types)
 
 local HttpService = game:GetService("HttpService")
 
+type RunCodeEnvelope = {
+	returns: { string },
+	logs: { string },
+	warnings: { string },
+	errors: { string },
+}
+
+local function encodeEnvelope(envelope: RunCodeEnvelope): string
+	local ok, result = pcall(function()
+		return HttpService:JSONEncode(envelope)
+	end)
+	if ok then
+		return result
+	end
+
+	return HttpService:JSONEncode({
+		returns = {},
+		logs = {},
+		warnings = {},
+		errors = { "Failed to encode run_code envelope: " .. tostring(result) },
+	})
+end
+
 local function runCodeWithOutput(command: string): string
-	local output = ""
+	local envelope: RunCodeEnvelope = {
+		returns = {},
+		logs = {},
+		warnings = {},
+		errors = {},
+	}
 
 	local function getTableType(arg)
 		local hasArray = false
@@ -67,43 +95,55 @@ local function runCodeWithOutput(command: string): string
 		local strTable = table.create(#clonedTable)
 		for i, arg in clonedTable do
 			local serializedArg = serializeTable(arg)
-			strTable[i] = if typeof(serializedArg) == "table"
-				then HttpService:JSONEncode(serializedArg)
-				else serializedArg
+			if typeof(serializedArg) == "table" then
+				local ok, encoded = pcall(function()
+					return HttpService:JSONEncode(serializedArg)
+				end)
+				strTable[i] = if ok then encoded else tostring(serializedArg)
+			elseif serializedArg == nil then
+				strTable[i] = "nil"
+			else
+				strTable[i] = tostring(serializedArg)
+			end
 		end
 		return strTable
 	end
 
-	local function addToOutput(header: string, ...)
+	local function addToEnvelope(target: { string }, ...)
 		local strResults = toStrTable(table.pack(...))
-		output ..= header .. " " .. table.concat(strResults, "\t") .. "\n"
+		table.insert(target, table.concat(strResults, "\t"))
 	end
 
 	local function executeCode()
-		local chunk = loadstring(command) :: any
+		local chunk, loadErr = loadstring(command)
+		if not chunk then
+			addToEnvelope(envelope.errors, loadErr)
+			return
+		end
+
 		local chunkfenv = getfenv(chunk)
 
 		local oldPrint = print
 		chunkfenv.print = function(...)
 			oldPrint(...)
-			addToOutput("[OUTPUT]", ...)
+			addToEnvelope(envelope.logs, ...)
 		end
 
 		local oldWarn = warn
 		chunkfenv.warn = function(...)
 			oldWarn(...)
-			addToOutput("[WARNING]", ...)
+			addToEnvelope(envelope.warnings, ...)
 		end
 
 		local oldError = error
 		chunkfenv.error = function(...)
+			addToEnvelope(envelope.errors, ...)
 			oldError(...)
-			addToOutput("[ERROR]", ...)
 		end
 
 		local results = table.pack(chunk())
 		if #results > 0 then
-			addToOutput("[RETURNED RESULTS]", table.unpack(results))
+			addToEnvelope(envelope.returns, table.unpack(results))
 		end
 
 		return results
@@ -111,10 +151,10 @@ local function runCodeWithOutput(command: string): string
 
 	local ok, errorMessage = pcall(executeCode)
 	if not ok then
-		addToOutput("[UNEXPECTED ERROR]", errorMessage)
+		addToEnvelope(envelope.errors, errorMessage)
 	end
 
-	return output
+	return encodeEnvelope(envelope)
 end
 
 local function handleRunCode(args: Types.ToolArgs): string?
@@ -124,7 +164,12 @@ local function handleRunCode(args: Types.ToolArgs): string?
 
 	local runCodeArgs: Types.RunCodeArgs = args["RunCode"]
 	if type(runCodeArgs.command) ~= "string" then
-		error("Missing command in RunCode")
+		return encodeEnvelope({
+			returns = {},
+			logs = {},
+			warnings = {},
+			errors = { "Missing command in RunCode" },
+		})
 	end
 
 	return runCodeWithOutput(runCodeArgs.command)
