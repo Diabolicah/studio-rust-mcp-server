@@ -157,12 +157,7 @@ local function runCodeWithOutput(command: string): string
 	return encodeEnvelope(envelope)
 end
 
-local function handleRunCode(args: Types.ToolArgs): string?
-	if not args["RunCode"] then
-		return nil
-	end
-
-	local runCodeArgs: Types.RunCodeArgs = args["RunCode"]
+local function handleRunCode(runCodeArgs: Types.RunCodeArgs): string?
 	if type(runCodeArgs.command) ~= "string" then
 		return encodeEnvelope({
 			returns = {},
